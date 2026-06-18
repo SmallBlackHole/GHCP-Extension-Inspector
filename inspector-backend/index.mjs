@@ -53,7 +53,7 @@ function createStaticHandler(uiDir) {
 // Implements the /agentdev/ws/rpc endpoint that the inspector UI connects to.
 // Handles system RPCs (theme, navigation) and proxy methods (fetch, SSE, WS).
 
-function handleRpcConnection(ws, agentPort) {
+function handleRpcConnection(ws, agentPort, onFixRequested) {
     const activeSSE = new Map();
     const activeWS = new Map();
 
@@ -108,7 +108,20 @@ function handleRpcConnection(ws, agentPort) {
                     signal: abort.signal,
                 });
                 if (!resp.ok) {
-                    sendNotification("webviewProxy/fetchSSE/done", { requestId: params.requestId, error: `HTTP ${resp.status} ${resp.statusText}` });
+                    // Read response body for meaningful error details
+                    let errorMessage = `HTTP ${resp.status} ${resp.statusText}`;
+                    try {
+                        const body = await resp.text();
+                        if (body) {
+                            try {
+                                const parsed = JSON.parse(body);
+                                const detail = parsed?.error?.message || parsed?.detail || parsed?.message || parsed?.error;
+                                if (typeof detail === "string") errorMessage = detail;
+                                else errorMessage = body;
+                            } catch { errorMessage = body; }
+                        }
+                    } catch { /* keep status-line error */ }
+                    sendNotification("webviewProxy/fetchSSE/done", { requestId: params.requestId, error: errorMessage });
                     return;
                 }
                 const reader = resp.body.getReader();
@@ -270,6 +283,13 @@ function handleRpcConnection(ws, agentPort) {
             case "webviewProxy/ws/connect": handleWSConnect(id, p); break;
             case "webviewProxy/ws/send": handleWSSend(id, p); break;
             case "webviewProxy/ws/close": handleWSClose(id, p); break;
+            // Fix with Copilot: forward fix request to the extension
+            case "inspector/fixRequested":
+                if (onFixRequested && p) {
+                    onFixRequested(p.source, p.errorSummary);
+                }
+                if (id != null) sendResult(id, null);
+                break;
             default:
                 // Respond with null to unblock UI for unknown requests
                 if (id != null) sendResult(id, null);
@@ -293,7 +313,7 @@ function handleRpcConnection(ws, agentPort) {
  * @param {number} options.agentPort - Port the agent is running on
  * @returns {Promise<{url: string, server: import('node:http').Server}>}
  */
-export async function createInspectorServer({ uiDir, agentPort }) {
+export async function createInspectorServer({ uiDir, agentPort, onFixRequested }) {
     const tryServeStatic = createStaticHandler(uiDir);
 
     const server = createServer((req, res) => {
@@ -319,7 +339,7 @@ export async function createInspectorServer({ uiDir, agentPort }) {
         const path = (req.url || "").split("?")[0];
         if (path === "/agentdev/ws/rpc") {
             wss.handleUpgrade(req, socket, head, (ws) => {
-                handleRpcConnection(ws, agentPort);
+                handleRpcConnection(ws, agentPort, onFixRequested);
             });
         } else if (path === "/agentdev/ws/health") {
             wss.handleUpgrade(req, socket, head, (ws) => {

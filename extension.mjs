@@ -115,10 +115,26 @@ function stopAzdAgent() {
 
 let inspectorProxyUrl = null;
 let inspectorProxyServer = null;
+let copilotSession = null; // Set after joinSession, used by onFixRequested callback
+
+function handleFixRequested(source, errorSummary) {
+    console.error(`[foundry-canvas] Fix requested from ${source}: ${errorSummary}`);
+    if (!copilotSession) {
+        console.error("[foundry-canvas] Fix requested but no Copilot session available");
+        return;
+    }
+    const prompt = `The agent encountered an error during testing in the Agent Inspector:\n\n${errorSummary}\n\nPlease fix this error and do a clean restart of the agent with previous running agent processes killed, so I can verify it works.`;
+    console.error("[foundry-canvas] Sending fix request to Copilot session...");
+    copilotSession.send(prompt).then(() => {
+        console.error("[foundry-canvas] Fix request sent successfully");
+    }).catch((err) => {
+        console.error("[foundry-canvas] Failed to send fix request to Copilot:", err.message);
+    });
+}
 
 async function getOrCreateInspectorProxy() {
     if (inspectorProxyUrl) return inspectorProxyUrl;
-    const { url, server } = await createInspectorServer({ uiDir: INSPECTOR_UI_DIR, agentPort: AGENT_PORT });
+    const { url, server } = await createInspectorServer({ uiDir: INSPECTOR_UI_DIR, agentPort: AGENT_PORT, onFixRequested: handleFixRequested });
     inspectorProxyServer = server;
     inspectorProxyUrl = url;
     console.error(`[foundry-canvas] inspector server: ${inspectorProxyUrl}`);
@@ -515,3 +531,6 @@ const session = await joinSession({
         }),
     ],
 });
+
+// Store session reference for fix-with-copilot callback
+copilotSession = session;
