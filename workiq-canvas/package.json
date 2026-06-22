@@ -1,0 +1,12 @@
+{
+  "name": "foundry-workiq-canvas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone Work IQ (Microsoft 365) tool integration canvas for the Foundry Copilot app extension.",
+  "main": "workiq-canvas.mjs",
+  "scripts": {
+    "start": "node workiq-canvas.mjs"
+  },
+  "license": "MIT"
+}

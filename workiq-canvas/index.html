@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Work IQ Tools — Microsoft Foundry</title>
+  <style>
+    :root {
+      --bg: #1e1e2e;
+      --surface: #262637;
+      --surface-2: #2e2e44;
+      --text: #e0e0e0;
+      --muted: #8888aa;
+      --accent: #58a6ff;
+      --success: #3fb950;
+      --warn: #d29922;
+      --border: #3a3a52;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh; padding: 24px 20px;
+    }
+    h1 { font-size: 18px; font-weight: 600; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+    .subtitle { font-size: 12px; color: var(--muted); margin: 4px 0 16px; }
+
+    .banner {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px 14px; margin-bottom: 16px; font-size: 12px; display: flex;
+      flex-wrap: wrap; gap: 6px 18px; align-items: center;
+    }
+    .banner .item { display: flex; gap: 6px; align-items: center; }
+    .banner .label { color: var(--muted); }
+    .banner .value { color: var(--text); font-weight: 500; }
+    .banner .warn { color: var(--warn); }
+
+    .toolbar { display: flex; gap: 10px; margin-bottom: 16px; }
+    #search {
+      flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); padding: 8px 12px; font-size: 13px;
+    }
+    #search:focus { outline: none; border-color: var(--accent); }
+    .refresh-btn {
+      background: var(--surface); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+    }
+    .refresh-btn:hover { border-color: var(--accent); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .card-head { display: flex; align-items: center; gap: 10px; }
+    .icon {
+      width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0; background: var(--surface-2);
+      display: flex; align-items: center; justify-content: center; font-size: 16px; overflow: hidden;
+    }
+    .icon img { width: 100%; height: 100%; object-fit: contain; }
+    .card-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .badge {
+      font-size: 9px; text-transform: uppercase; letter-spacing: .4px; padding: 2px 6px;
+      border-radius: 8px; background: rgba(210,153,34,.15); color: var(--warn); font-weight: 600;
+    }
+    .card-desc { font-size: 12px; color: var(--muted); line-height: 1.45; flex: 1; }
+    .card-meta { font-size: 11px; color: var(--muted); }
+    .add-btn {
+      align-self: flex-start; margin-top: 4px; background: var(--accent); color: #fff; border: none;
+      border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .add-btn:hover { opacity: .9; }
+    .add-btn:disabled { opacity: .55; cursor: default; }
+    .add-btn.done { background: var(--success); }
+
+    .state { color: var(--muted); font-style: italic; padding: 30px 0; text-align: center; }
+
+    #toast {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+      color: var(--text); padding: 10px 16px; border-radius: 6px; font-size: 12px; max-width: 80vw;
+      opacity: 0; transition: opacity .25s; pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+    #toast.error { border-left-color: var(--warn); }
+  </style>
+</head>
+<body>
+  <h1>🧩 Work IQ Tools</h1>
+  <p class="subtitle">Add Microsoft 365 work context — Teams, Outlook, email, meetings, files, messages — to your Foundry agent.</p>
+
+  <div class="banner" id="banner"><span class="state" style="padding:0">Loading project context…</span></div>
+
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="Search Work IQ tools…" autocomplete="off" />
+    <button class="refresh-btn" id="refresh">↻ Refresh</button>
+  </div>
+
+  <div class="grid" id="grid"><div class="state">Loading Work IQ tools…</div></div>
+
+  <div id="toast"></div>
+
+  <script>
+    let allTools = [];
+    let context = null;
+
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function showToast(msg, isError) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = "show" + (isError ? " error" : "");
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => { t.className = ""; }, 5000);
+    }
+
+    function renderBanner() {
+      const b = document.getElementById("banner");
+      if (!context) { b.innerHTML = '<span class="warn">Could not load project context.</span>'; return; }
+      const parts = [];
+      if (context.projectName || context.projectEndpoint) {
+        parts.push(`<span class="item"><span class="label">Project</span><span class="value">${esc(context.projectName || context.projectEndpoint)}</span></span>`);
+      } else {
+        parts.push('<span class="item warn">No Foundry project selected</span>');
+      }
+      if (context.account) {
+        parts.push(`<span class="item"><span class="label">Signed in</span><span class="value">${esc(context.account)}</span></span>`);
+      } else {
+        parts.push('<span class="item warn">Not signed in — run <code>az login</code></span>');
+      }
+      if (context.subscriptionId) {
+        parts.push(`<span class="item"><span class="label">Subscription</span><span class="value">${esc(context.subscriptionId)}</span></span>`);
+      }
+      for (const w of context.warnings || []) {
+        parts.push(`<span class="item warn">⚠ ${esc(w)}</span>`);
+      }
+      b.innerHTML = parts.join("");
+    }
+
+    function iconHtml(tool) {
+      const ic = tool.icon;
+      if (typeof ic === "string" && (ic.startsWith("http") || ic.startsWith("data:"))) {
+        return `<span class="icon"><img src="${esc(ic)}" alt="" /></span>`;
+      }
+      return `<span class="icon">📇</span>`;
+    }
+
+    function cardHtml(tool, idx) {
+      const badge = tool.isPreview ? '<span class="badge">Preview</span>' : "";
+      const meta = tool.serverUrl ? `<div class="card-meta">${esc(tool.serverUrl)}</div>` : "";
+      return `<div class="card">
+        <div class="card-head">
+          ${iconHtml(tool)}
+          <div class="card-title">${esc(tool.name)} ${badge}</div>
+        </div>
+        <div class="card-desc">${esc(tool.description)}</div>
+        ${meta}
+        <button class="add-btn" data-idx="${idx}">Add to project</button>
+      </div>`;
+    }
+
+    function renderGrid() {
+      const q = document.getElementById("search").value.trim().toLowerCase();
+      const grid = document.getElementById("grid");
+      const filtered = allTools.filter((t) =>
+        !q || (t.name && t.name.toLowerCase().includes(q)) || (t.description && t.description.toLowerCase().includes(q)));
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div class="state">No matching Work IQ tools.</div>';
+        return;
+      }
+      grid.innerHTML = filtered.map((t) => cardHtml(t, allTools.indexOf(t))).join("");
+    }
+
+    async function addTool(idx, btn) {
+      const tool = allTools[idx];
+      if (!tool) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = "Adding…";
+      try {
+        const r = await fetch("/api/add-tool", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(tool),
+        });
+        const data = await r.json();
+        if (data.ok) {
+          btn.textContent = "✓ Sent to Copilot";
+          btn.classList.add("done");
+          showToast(data.message || (data.standalone ? "Standalone: hand-off prompt logged to console." : "Done."));
+        } else {
+          btn.textContent = orig; btn.disabled = false;
+          showToast(data.error || "Failed to add tool.", true);
+        }
+      } catch (err) {
+        btn.textContent = orig; btn.disabled = false;
+        showToast("Request failed: " + err.message, true);
+      }
+    }
+
+    async function loadContext() {
+      try {
+        context = await (await fetch("/api/context")).json();
+      } catch { context = null; }
+      renderBanner();
+    }
+
+    async function loadTools() {
+      const grid = document.getElementById("grid");
+      grid.innerHTML = '<div class="state">Loading Work IQ tools…</div>';
+      try {
+        const data = await (await fetch("/api/tools")).json();
+        allTools = data.tools || [];
+        renderGrid();
+      } catch (err) {
+        grid.innerHTML = `<div class="state">Failed to load tools: ${esc(err.message)}</div>`;
+      }
+    }
+
+    document.getElementById("search").addEventListener("input", renderGrid);
+    document.getElementById("refresh").addEventListener("click", () => { loadContext(); loadTools(); });
+    document.getElementById("grid").addEventListener("click", (e) => {
+      const btn = e.target.closest(".add-btn");
+      if (btn) addTool(Number(btn.dataset.idx), btn);
+    });
+
+    loadContext();
+    loadTools();
+  </script>
+</body>
+</html>

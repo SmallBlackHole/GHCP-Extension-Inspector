@@ -11,6 +11,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createInspectorServer } from "./inspector-backend/index.mjs";
+import { createWorkIqCanvases, setWorkIqSession } from "./workiq-canvas/workiq-canvas.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -529,8 +530,10 @@ const session = await joinSession({
             },
             onClose: async () => {},
         }),
+        ...createWorkIqCanvases(createCanvas, { projectRoot: PROJECT_ROOT }),
     ],
 });
 
 // Store session reference for fix-with-copilot callback
 copilotSession = session;
+setWorkIqSession(session);
