@@ -8,7 +8,7 @@
 // The page is intentionally simple: a static index.html served by a tiny Node
 // HTTP server. The server also exposes:
 //   GET  /api/context   -> current Foundry project info + signed-in identity
-//   GET  /api/tools     -> Work IQ tool list (live catalog + Work IQ Chat row)
+//   GET  /api/tools     -> Work IQ toolbox MCP tool list (live catalog, `workiq`-tagged)
 //   POST /api/add-tool  -> hand the "add this tool" intent to the Copilot session
 //
 // It mirrors the sibling Agent Inspector extension's canvas pattern.
@@ -128,23 +128,12 @@ function getProjectContext() {
 
 // ─── Work IQ tool catalog ───────────────────────────────────────────────────
 // Same anonymous catalog endpoint the ai-mlstudio extension uses. Work IQ tools
-// are catalog entries tagged `workiq`. We prepend the hardcoded "Work IQ Chat"
-// A2A row (the catalog query returns only the MCP connectors), mirroring
-// ai-mlstudio's WorkIQDialog.getWorkIQVariants().
+// are catalog entries tagged `workiq` — the toolbox MCP connectors (Mail,
+// Calendar, Teams, Outlook, SharePoint, OneDrive, etc.). We intentionally do
+// NOT surface the A2A "Work IQ Chat" variant: it routes the Copilot hand-off
+// to a different (wrong) doc/flow. Only the toolbox `mcp` tools are offered.
 const WORKIQ_TAG = "workiq";
 const CATALOG_ENDPOINT = "https://ai.azure.com/api/eastus/ux/v1.0/entities/crossRegion";
-
-const WORKIQ_CHAT_VARIANT = {
-    id: "work_iq",
-    internalName: "work-iq-chat",
-    name: "Work IQ Chat",
-    description: "Chat with Microsoft 365 Copilot across your emails, meetings, documents, and Teams messages.",
-    kind: "a2a_preview",
-    serverUrl: "https://workiq.svc.cloud.microsoft/a2a/",
-    icon: undefined,
-    provider: "Microsoft",
-    isPreview: true,
-};
 
 function catalogRequestBody() {
     return {
@@ -188,7 +177,7 @@ function mapCatalogEntry(entry) {
 }
 
 async function getWorkIqTools() {
-    const tools = [{ ...WORKIQ_CHAT_VARIANT }];
+    const tools = [];
     try {
         const resp = await fetch(CATALOG_ENDPOINT, {
             method: "POST",
@@ -226,13 +215,11 @@ function buildAddToolPrompt(tool, ctx) {
     const projectLine = ctx?.projectEndpoint
         ? `my current Foundry project "${ctx.projectName || ctx.projectEndpoint}" (endpoint ${ctx.projectEndpoint})`
         : "my current Foundry project";
-    const isA2A = tool.kind === "a2a_preview";
-    const wiring = isA2A
-        ? `- Create a managed Work IQ connection (1P OAuth/OBO, no BYO Entra app or target URL), then add a \`{ "type": "work_iq_preview", "project_connection_id": "<conn>" }\` entry to the agent's toolbox version.`
-        : `- Create the remote-tool project connection for the MCP server ${tool.serverUrl || "(see catalog)"} per foundry-tool-catalog.md, then add a \`{ "type": "mcp", "project_connection_id": "<conn>" }\` entry to the agent's toolbox version.`;
+    const audience = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"; // Work IQ app ID — token audience for the MCP connectors (Mail/Calendar/etc.)
+    const wiring = `- Create the \`RemoteTool\` (MCP) project connection for the Work IQ MCP server ${tool.serverUrl || "(see catalog)"} per foundry-tool-catalog.md with \`UserEntraToken\` auth and \`metadata.audience = ${audience}\`, then add a \`{ "type": "mcp", "project_connection_id": "<conn>" }\` entry to the agent's toolbox version.`;
 
     return [
-        `Integrate my Foundry agent with Microsoft 365 Work IQ by adding the Work IQ tool "${tool.name}" (catalog id \`${tool.internalName || tool.id}\`) to ${projectLine}.`,
+        `Integrate my Foundry agent with Microsoft 365 Work IQ by adding the **Work IQ toolbox MCP tool** "${tool.name}" (catalog id \`${tool.internalName || tool.id}\`) to ${projectLine}. This is the toolbox MCP connector (Teams, Outlook, Mail, Calendar, etc.) — NOT the A2A "Work IQ Chat".`,
         ``,
         `Use the microsoft-foundry skill's Work IQ workflow (foundry-agent/create/references/tool-work-iq.md) and do the FULL chain so the tool is actually usable and testable in the Agent Inspector:`,
         wiring,
