@@ -34,13 +34,28 @@ const CANVAS_IDS = ["foundry-workiq", "foundry-workiq-v2"];
 // ─── Azure CLI / azd helpers ────────────────────────────────────────────────
 const IS_WINDOWS = process.platform === "win32";
 
+function probeKnownPaths(bin) {
+    if (!IS_WINDOWS) return undefined;
+    const PF = process.env["ProgramFiles"] || "C:\\Program Files";
+    const LAD = process.env["LOCALAPPDATA"];
+    const candidates = [];
+    if (bin === "az") {
+        candidates.push(join(PF, "Microsoft SDKs", "Azure", "CLI2", "wbin", "az.cmd"));
+    } else if (bin === "azd") {
+        candidates.push(join(PF, "Azure Dev CLI", "azd.exe"));
+        if (LAD) candidates.push(join(LAD, "Programs", "Azure Dev CLI", "azd.exe"));
+    }
+    return candidates.find(c => existsSync(c));
+}
+
 function which(bin) {
     const r = spawnSync(IS_WINDOWS ? "where" : "which", [bin], { encoding: "utf-8", shell: IS_WINDOWS });
     if (r.status === 0 && r.stdout) {
         const first = r.stdout.trim().split(/\r?\n/)[0].trim();
         if (first) return first;
     }
-    return IS_WINDOWS ? `${bin}.cmd` : bin;
+    // GUI-launched extension hosts can have a reduced PATH that omits az/azd.
+    return probeKnownPaths(bin) || (IS_WINDOWS ? `${bin}.cmd` : bin);
 }
 
 const AZD_PATH = which("azd");
@@ -55,16 +70,31 @@ function run(cmd, args, cwd) {
     }
 }
 
+// Recursively locate the azd project dir (the one holding `azure.yaml`) under
+// the workspace root. The agent typically scaffolds it into a sub-folder
+// (e.g. `workagent1/`), so a single-level scan isn't enough. Prefer a project
+// that already has an initialized azd env (`.azure/`).
 function findAzdProjectDir() {
-    if (existsSync(join(PROJECT_ROOT, "azure.yaml"))) return PROJECT_ROOT;
-    try {
-        for (const entry of readdirSync(PROJECT_ROOT, { withFileTypes: true })) {
-            if (entry.isDirectory()) {
-                const candidate = join(PROJECT_ROOT, entry.name, "azure.yaml");
-                if (existsSync(candidate)) return join(PROJECT_ROOT, entry.name);
+    const SKIP = new Set(["node_modules", ".git", ".github", ".azure", "dist", "out", "bin", "obj", ".vs", ".vscode", "__pycache__"]);
+    const matches = [];
+    const walk = (dir, depth) => {
+        if (depth > 4) return;
+        let entries;
+        try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        if (entries.some(e => e.isFile() && e.name === "azure.yaml")) {
+            matches.push({ dir, hasEnv: existsSync(join(dir, ".azure")) });
+            return; // don't descend into a found project
+        }
+        for (const e of entries) {
+            if (e.isDirectory() && !SKIP.has(e.name) && !e.name.startsWith(".")) {
+                walk(join(dir, e.name), depth + 1);
             }
         }
-    } catch { /* ignore */ }
+    };
+    walk(PROJECT_ROOT, 0);
+    if (matches.length) {
+        return (matches.find(m => m.hasEnv) || matches[0]).dir;
+    }
     return PROJECT_ROOT;
 }
 
@@ -97,20 +127,32 @@ function getProjectContext() {
         warnings: [],
     };
 
-    // azd env values (project deployment context)
+    // Project endpoint — prefer `azd ai project show` (matches the new `azd ai
+    // project` selection), then fall back to classic `azd env get-values`.
+    const proj = run(AZD_PATH, ["ai", "project", "show"], cwd);
+    if (proj.status === 0 && proj.stdout) {
+        const ep = proj.stdout.match(/Project endpoint:\s*(\S+)/i);
+        if (ep) {
+            ctx.projectEndpoint = ep[1];
+            const nameMatch = ep[1].match(/\/projects\/([^/?#]+)/i);
+            if (nameMatch) ctx.projectName = decodeURIComponent(nameMatch[1]);
+        }
+    }
     const env = run(AZD_PATH, ["env", "get-values"], cwd);
     if (env.status === 0 && env.stdout) {
         const v = parseEnvValues(env.stdout);
-        ctx.projectEndpoint = v.AZURE_AI_PROJECT_ENDPOINT || v.AZURE_AIPROJECT_ENDPOINT;
-        ctx.projectName = v.AZURE_AI_PROJECT_NAME || v.AZURE_AI_ACCOUNT_NAME;
+        ctx.projectEndpoint = ctx.projectEndpoint || v.AZURE_AI_PROJECT_ENDPOINT || v.AZURE_AIPROJECT_ENDPOINT;
+        ctx.projectName = ctx.projectName || v.AZURE_AI_PROJECT_NAME || v.AZURE_AI_ACCOUNT_NAME;
         ctx.subscriptionId = v.AZURE_SUBSCRIPTION_ID;
         ctx.resourceGroup = v.AZURE_RESOURCE_GROUP;
-    } else {
-        ctx.warnings.push("No azd project values found. Run `azd ai agent` / select a Foundry project.");
+    }
+    if (!ctx.projectEndpoint) {
+        ctx.warnings.push("No Foundry project found. Run `azd ai project select` (or `azd ai agent`) in your project folder.");
     }
 
-    // az identity (signed-in account + tenant)
-    const acct = run(AZ_PATH, ["account", "show", "-o", "json"]);
+    // az identity (signed-in account + tenant). az is cwd-independent, but pass
+    // cwd anyway for consistency.
+    const acct = run(AZ_PATH, ["account", "show", "-o", "json"], cwd);
     if (acct.status === 0 && acct.stdout) {
         try {
             const a = JSON.parse(acct.stdout);
