@@ -228,7 +228,7 @@ function buildAddToolPrompt(tool, ctx) {
         : "my current Foundry project";
     const isA2A = tool.kind === "a2a_preview";
     const wiring = isA2A
-        ? `- Create a Work IQ \`RemoteA2A\` project connection targeting ${tool.serverUrl} (OAuth2, BYO Entra app), then add a \`{ "type": "work_iq_preview", "project_connection_id": "<conn>" }\` entry to the agent's toolbox version.`
+        ? `- Create a managed Work IQ connection (1P OAuth/OBO, no BYO Entra app or target URL), then add a \`{ "type": "work_iq_preview", "project_connection_id": "<conn>" }\` entry to the agent's toolbox version.`
         : `- Create the remote-tool project connection for the MCP server ${tool.serverUrl || "(see catalog)"} per foundry-tool-catalog.md, then add a \`{ "type": "mcp", "project_connection_id": "<conn>" }\` entry to the agent's toolbox version.`;
 
     return [
@@ -237,7 +237,7 @@ function buildAddToolPrompt(tool, ctx) {
         `Use the microsoft-foundry skill's Work IQ workflow (foundry-agent/create/references/tool-work-iq.md) and do the FULL chain so the tool is actually usable and testable in the Agent Inspector:`,
         wiring,
         `- Ensure the hosted agent is wired to that toolbox: confirm \`TOOLBOX_ENDPOINT\` is set (declare the toolbox + connection in \`azure.yaml\` so \`azd up\` provisions it and injects the env var if it isn't already).`,
-        `- Walk me through the Work IQ prerequisites: BYO Entra app registration, Global-Admin consent for \`WorkIQAgent.Ask\`, an M365 Copilot license for the calling user, and a non-VNet project endpoint.`,
+        `- Walk me through the Work IQ prerequisites: 1P managed OAuth (OBO) — each user signs in once, no BYO Entra app or Global-Admin admin consent; an M365 Copilot license for the calling user; and a non-VNet project endpoint.`,
         `- Then do a clean restart of the local agent (kill the previous process) so I can verify it in the Agent Inspector.`,
     ].join("\n");
 }
