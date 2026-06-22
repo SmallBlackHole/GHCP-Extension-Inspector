@@ -156,15 +156,39 @@ async function ensureInspectorProxy() {
 // ─── Runtime state ────────────────────────────────────────────────────────────
 const instances = new Map();
 
-function createState(steps = []) {
+// Follow-up "next steps" buttons shown after every workflow step is done.
+// Each entry: { id, label, prompt } (prompt is sent to the Copilot session) or { id, label, url }.
+const DEFAULT_FOLLOWUPS = [
+    {
+        id: "workiq",
+        label: "Integrate your agent with Work IQ (Microsoft Teams, Outlook, etc.)",
+        prompt:
+            "I want to integrate my agent with Work IQ so it can access Microsoft 365 data such as Mail, Calendar, Teams, Outlook, SharePoint and OneDrive. Please open the Work IQ Tools canvas (foundry-workiq) and help me add the Work IQ MCP connectors to my agent's toolbox, following foundry-agent/create/references/tool-work-iq.md.",
+    },
+    {
+        id: "evaluate",
+        label: "Evaluate your agent's quality",
+        prompt:
+            "Help me evaluate my hosted agent's quality. Set up and run a batch evaluation following the microsoft-foundry evaluation guidance.",
+    },
+    {
+        id: "deploy",
+        label: "Deploy your agent to production",
+        prompt:
+            "Help me deploy my hosted agent to production using azd, following the microsoft-foundry deploy guidance.",
+    },
+];
+
+function createState(steps = [], followups = DEFAULT_FOLLOWUPS) {
     return {
         steps: steps.map((s) => ({ ...s, status: s.status || "pending" })),
+        followups,
         sseClients: new Set(),
     };
 }
 
 function broadcast(state) {
-    const payload = JSON.stringify(state.steps);
+    const payload = JSON.stringify({ steps: state.steps, followups: state.followups });
     for (const res of state.sseClients) {
         res.write(`data: ${payload}\n\n`);
     }
@@ -237,6 +261,17 @@ function renderHtml() {
     }
     .action-btn:hover { opacity: 0.85; }
     .action-btn:disabled { opacity: 0.5; cursor: wait; }
+    .followup-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+    .followup-buttons { display: flex; flex-direction: column; gap: 10px; }
+    .followup-btn {
+      display: inline-flex; align-items: center; gap: 8px; text-align: left;
+      padding: 10px 14px; background: var(--surface); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-weight: 500;
+      cursor: pointer; transition: border-color 0.2s, background 0.2s; width: 100%;
+    }
+    .followup-btn:hover { border-color: var(--accent); background: rgba(88,166,255,0.08); }
+    .followup-btn:disabled { opacity: 0.6; cursor: wait; }
+    .followup-btn .fu-arrow { margin-left: auto; color: var(--accent); }
     .progress-bar { margin-top: 20px; background: var(--surface); border-radius: 6px; height: 6px; overflow: hidden; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, var(--success), var(--accent)); border-radius: 6px; transition: width 0.5s ease; }
     .progress-text { font-size: 11px; color: var(--muted); margin-top: 6px; text-align: right; }
@@ -249,6 +284,10 @@ function renderHtml() {
     <div class="steps" id="steps"></div>
     <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
     <p class="progress-text" id="progress-text"></p>
+    <div id="followup" style="display:none; margin-top:24px; padding-top:20px; border-top:1px solid var(--border);">
+      <div class="followup-title">✨ Next steps</div>
+      <div class="followup-buttons" id="followup-buttons"></div>
+    </div>
   </div>
   <div id="inspector-view" style="display:none; flex-direction:column; height:100vh;">
     <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--surface); border-bottom:1px solid var(--border); flex-shrink:0;">
@@ -332,9 +371,67 @@ function renderHtml() {
       document.getElementById('progress-text').textContent = done + ' of ' + total + ' steps complete (' + pct + '%)';
     }
 
+    let followupsData = [];
+
+    function renderFollowups(steps, followups) {
+      followupsData = Array.isArray(followups) ? followups : [];
+      const wrap = document.getElementById('followup');
+      const buttons = document.getElementById('followup-buttons');
+      const total = (steps || []).length;
+      const done = (steps || []).filter(s => s.status === 'done').length;
+      const allDone = total > 0 && done === total;
+      if (!allDone || followupsData.length === 0) {
+        wrap.style.display = 'none';
+        buttons.innerHTML = '';
+        return;
+      }
+      buttons.innerHTML = followupsData.map((fu, i) =>
+        \`<button class="followup-btn" onclick="triggerFollowup(\${i})">
+          <span>\${fu.label}</span>
+          <span class="fu-arrow">→</span>
+        </button>\`
+      ).join('');
+      wrap.style.display = 'block';
+    }
+
+    function triggerFollowup(index) {
+      const fu = followupsData[index];
+      if (!fu) return;
+      const btn = event.currentTarget;
+      const orig = btn.innerHTML;
+      if (fu.url) {
+        window.open(fu.url, '_blank');
+        btn.innerHTML = '✓ Opened';
+        setTimeout(() => { btn.innerHTML = orig; }, 2000);
+        return;
+      }
+      btn.innerHTML = '⏳ Sending to Copilot…';
+      btn.disabled = true;
+      fetch('/followup?id=' + encodeURIComponent(fu.id))
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok) {
+            btn.innerHTML = '✓ Sent to Copilot';
+            setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+          } else {
+            btn.innerHTML = '⚠️ ' + (data.error || 'Failed');
+            setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+          }
+        })
+        .catch(() => {
+          btn.innerHTML = '⚠️ Connection failed';
+          setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3000);
+        });
+    }
+
     render([]);
+    renderFollowups([], []);
     const es = new EventSource('/events');
-    es.onmessage = (e) => { render(JSON.parse(e.data)); };
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      render(data.steps);
+      renderFollowups(data.steps, data.followups);
+    };
   </script>
 </body>
 </html>`;
@@ -349,8 +446,30 @@ async function startServer(instanceId, initialSteps = []) {
         if (req.url === "/events") {
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
             state.sseClients.add(res);
-            res.write(`data: ${JSON.stringify(state.steps)}\n\n`);
+            res.write(`data: ${JSON.stringify({ steps: state.steps, followups: state.followups })}\n\n`);
             req.on("close", () => state.sseClients.delete(res));
+            return;
+        }
+        if (req.url && req.url.startsWith("/followup")) {
+            res.setHeader("Content-Type", "application/json");
+            try {
+                const id = new URL(req.url, "http://127.0.0.1").searchParams.get("id");
+                const followup = (state.followups || []).find((f) => f.id === id);
+                if (!followup) {
+                    res.end(JSON.stringify({ ok: false, error: "Unknown follow-up" }));
+                } else if (!followup.prompt) {
+                    res.end(JSON.stringify({ ok: false, error: "No prompt configured" }));
+                } else if (!copilotSession) {
+                    res.end(JSON.stringify({ ok: false, error: "Copilot session not available" }));
+                } else {
+                    copilotSession.send(followup.prompt).catch((err) =>
+                        console.error(`[foundry-canvas] follow-up send failed: ${err.message}`),
+                    );
+                    res.end(JSON.stringify({ ok: true }));
+                }
+            } catch (err) {
+                res.end(JSON.stringify({ ok: false, error: err.message }));
+            }
             return;
         }
         if (req.url === "/start-agent") {
@@ -437,6 +556,20 @@ const session = await joinSession({
                                     required: ["id", "label", "description"],
                                 },
                             },
+                            followups: {
+                                type: "array",
+                                description: "Optional override for the 'Next steps' buttons shown after every step is done. Defaults include integrating with Work IQ, evaluating, and deploying.",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        id: { type: "string", description: "Unique follow-up identifier" },
+                                        label: { type: "string", description: "Button text" },
+                                        prompt: { type: "string", description: "Prompt sent to Copilot when clicked" },
+                                        url: { type: "string", description: "URL to open instead of sending a prompt" },
+                                    },
+                                    required: ["id", "label"],
+                                },
+                            },
                         },
                         required: ["steps"],
                     },
@@ -448,6 +581,7 @@ const session = await joinSession({
                             ...(s.action ? { action: s.action } : {}),
                             status: "pending",
                         }));
+                        if (Array.isArray(ctx.input.followups)) state.followups = ctx.input.followups;
                         broadcast(state);
                         saveState(ctx.instanceId, state.steps);
                         return { ok: true, step_count: state.steps.length, step_ids: state.steps.map((s) => s.id) };
