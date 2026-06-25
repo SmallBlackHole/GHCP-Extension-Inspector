@@ -443,7 +443,7 @@ async function ensureServer() {
     return sharedServer;
 }
 
-/** Provide the Copilot session so the Add-to-project hand-off can call session.send(...). */
+/** Provide the Copilot session so the Add-to-agent hand-off can call session.send(...). */
 export function setWorkIqSession(session) {
     copilotSession = session;
 }

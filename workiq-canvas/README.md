@@ -12,7 +12,7 @@ not a separate extension — one extension hosts multiple canvases.
    (`ai.azure.com/.../entities/crossRegion`, entries tagged `workiq`), plus the
    hardcoded **Work IQ Chat** A2A row.
 2. Shows current project + signed-in identity (`azd env get-values` + `az account show`).
-3. On **Add to project**, hands the intent to the Copilot session
+3. On **Add to agent**, hands the intent to the Copilot session
    (`session.send(...)`). The agent then uses the `microsoft-foundry` skill
    (`tool-work-iq`) to create the connection, add it to the agent's toolbox, wire
    `TOOLBOX_ENDPOINT`, cover the Work IQ Entra/consent prerequisites, and clean-restart
@@ -35,7 +35,7 @@ const session = await joinSession({
     ...createWorkIqCanvases(createCanvas, { projectRoot: PROJECT_ROOT }),
   ],
 });
-setWorkIqSession(session); // enables the Add-to-project hand-off
+setWorkIqSession(session); // enables the Add-to-agent hand-off
 ```
 
 - `createWorkIqCanvases(createCanvas, { projectRoot })` returns the canvas objects for
@@ -59,7 +59,7 @@ node workiq-canvas/workiq-canvas.mjs
 # open the printed http://127.0.0.1:<port>/ URL
 ```
 
-In standalone mode the catalog list and project banner work; **Add to project**
+In standalone mode the catalog list and project banner work; **Add to agent**
 logs the hand-off prompt to the console instead of sending it to a session.
 
 ## Prerequisites
